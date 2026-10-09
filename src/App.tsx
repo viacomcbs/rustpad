@@ -8,7 +8,7 @@ import useLocalStorageState from "use-local-storage-state";
 import rustpadRaw from "../rustpad-server/src/rustpad.rs?raw";
 import Footer from "./Footer";
 import ReadCodeConfirm from "./ReadCodeConfirm";
-import type { RunState } from "./RunOutput";
+import RunOutput, { type RunState } from "./RunOutput";
 import Sidebar from "./Sidebar";
 import animals from "./animals.json";
 import languages from "./languages.json";
@@ -261,6 +261,13 @@ function App() {
               }}
             />
           </Box>
+          {outputOpen && run.status !== "idle" && (
+            <RunOutput
+              run={run}
+              darkMode={darkMode}
+              onClose={() => setOutputOpen(false)}
+            />
+          )}
         </Flex>
       </Flex>
       <Footer />
