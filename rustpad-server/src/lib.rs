@@ -20,8 +20,8 @@ use crate::{
 };
 
 pub mod database;
-pub mod piston;
 mod ot;
+pub mod piston;
 mod rustpad;
 
 /// An entry stored in the global server map.

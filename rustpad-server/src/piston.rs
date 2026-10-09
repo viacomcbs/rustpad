@@ -142,7 +142,11 @@ impl PistonClient {
     }
 
     /// Creates a client with custom timeouts.
-    pub fn with_timeouts(base_url: &str, connect: Duration, total: Duration) -> anyhow::Result<Self> {
+    pub fn with_timeouts(
+        base_url: &str,
+        connect: Duration,
+        total: Duration,
+    ) -> anyhow::Result<Self> {
         let base = reqwest::Url::parse(base_url).context("invalid Piston URL")?;
         let http = reqwest::Client::builder()
             // Piston is reached directly on the internal network, never through a proxy.
@@ -211,7 +215,10 @@ async fn parse<T: DeserializeOwned>(mut response: reqwest::Response) -> Result<T
         body.extend_from_slice(&chunk);
     }
     if !status.is_success() {
-        warn!("Piston returned {status}: {}", String::from_utf8_lossy(&body));
+        warn!(
+            "Piston returned {status}: {}",
+            String::from_utf8_lossy(&body)
+        );
         return Err(RunError::Unavailable);
     }
     serde_json::from_slice(&body).map_err(|e| {
@@ -363,7 +370,10 @@ mod tests {
 
     #[test]
     fn resolve_uses_override_table() {
-        let available = [piston("c++", "10.2.0", &["g++"]), piston("bash", "5.2.0", &["sh"])];
+        let available = [
+            piston("c++", "10.2.0", &["g++"]),
+            piston("bash", "5.2.0", &["sh"]),
+        ];
         let got = resolve(&langs(&["cpp", "shell"]), &available);
         assert_eq!(got[0].language, "cpp");
         assert_eq!(got[0].runtime, "c++");
@@ -391,7 +401,10 @@ mod tests {
 
     #[test]
     fn resolve_skips_languages_without_runtime() {
-        let got = resolve(&langs(&["markdown", "python"]), &[piston("python", "3.12.0", &[])]);
+        let got = resolve(
+            &langs(&["markdown", "python"]),
+            &[piston("python", "3.12.0", &[])],
+        );
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].language, "python");
     }

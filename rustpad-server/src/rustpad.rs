@@ -2,17 +2,19 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
 use futures::prelude::*;
 use log::{info, warn};
 use operational_transform::OperationSeq;
-use parking_lot::{RwLock, RwLockUpgradableReadGuard};
+use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, watch, Notify};
 use warp::ws::{Message, WebSocket};
 
-use crate::piston::{Runner, Runtime};
+use crate::piston::{RunStage, Runner, Runtime};
 use crate::{database::PersistedDocument, ot::transform_index};
 
 /// The main object representing a collaborative session.
@@ -29,6 +31,8 @@ pub struct Rustpad {
     killed: AtomicBool,
     /// Piston access, if code execution is enabled.
     runner: Option<Runner>,
+    /// State of code runs, shared with the task running the code.
+    run: Arc<Mutex<RunState>>,
 }
 
 /// Shared state involving multiple users, protected by a lock.
@@ -39,6 +43,15 @@ struct State {
     language: Option<String>,
     users: HashMap<u64, UserInfo>,
     cursors: HashMap<u64, CursorData>,
+}
+
+/// Code run state for one document, kept in memory only.
+#[derive(Default)]
+struct RunState {
+    /// User ID of the run in progress.
+    running: Option<u64>,
+    /// The last `RunFinished` or `RunFailed` message.
+    last: Option<ServerMsg>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -73,6 +86,8 @@ enum ClientMsg {
     ClientInfo(UserInfo),
     /// Sets the user's cursor and selection positions.
     CursorData(CursorData),
+    /// Runs the current document with its language's runtime.
+    Run,
 }
 
 /// A message sent to the client over WebSocket.
@@ -93,6 +108,20 @@ enum ServerMsg {
     UserCursor { id: u64, data: CursorData },
     /// Lists the languages this server can run.
     Runtimes(Vec<Runtime>),
+    /// Broadcasts that a user started a run.
+    RunStarted { id: u64 },
+    /// Broadcasts the result of a finished run.
+    RunFinished {
+        id: u64,
+        language: String,
+        runtime: String,
+        version: String,
+        compile: Option<Box<RunStage>>,
+        run: Option<Box<RunStage>>,
+        duration_ms: u64,
+    },
+    /// Broadcasts that a run could not complete.
+    RunFailed { id: u64, error: String },
 }
 
 impl From<ServerMsg> for Message {
@@ -112,6 +141,7 @@ impl Default for Rustpad {
             update: tx,
             killed: AtomicBool::new(false),
             runner: None,
+            run: Default::default(),
         }
     }
 }
@@ -266,6 +296,13 @@ impl Rustpad {
             if let Some(rx) = runtimes_rx {
                 messages.push(ServerMsg::Runtimes(rx.borrow_and_update().clone()));
             }
+            let run = self.run.lock();
+            if let Some(id) = run.running {
+                messages.push(ServerMsg::RunStarted { id });
+            } else if let Some(last) = &run.last {
+                messages.push(last.clone());
+            }
+            drop(run);
             state.operations.len()
         };
         for msg in messages {
@@ -323,8 +360,82 @@ impl Rustpad {
                 let msg = ServerMsg::UserCursor { id, data };
                 self.update.send(msg).ok();
             }
+            ClientMsg::Run => self.start_run(id),
         }
         Ok(())
+    }
+
+    /// Starts running the document for user `id`, unless a run is in progress.
+    fn start_run(&self, id: u64) {
+        let Some(runner) = &self.runner else {
+            warn!("run requested by id = {}, but code execution is off", id);
+            return;
+        };
+        let (text, language) = {
+            let state = self.state.read();
+            let language = state.language.clone();
+            (
+                state.text.clone(),
+                language.unwrap_or_else(|| "plaintext".into()),
+            )
+        };
+        let runtime = runner
+            .runtimes
+            .borrow()
+            .iter()
+            .find(|r| r.language == language)
+            .cloned();
+
+        let mut run = self.run.lock();
+        if run.running.is_some() {
+            info!("run requested by id = {} while busy, ignoring", id);
+            return;
+        }
+        let Some(runtime) = runtime else {
+            let msg = ServerMsg::RunFailed {
+                id,
+                error: format!("No runtime for {language}"),
+            };
+            run.last = Some(msg.clone());
+            self.update.send(msg).ok();
+            return;
+        };
+        run.running = Some(id);
+        self.update.send(ServerMsg::RunStarted { id }).ok();
+        drop(run);
+
+        info!(
+            "run: id = {}, runtime = {} {}",
+            id, runtime.runtime, runtime.version
+        );
+        let client = runner.client.clone();
+        let run_state = Arc::clone(&self.run);
+        let update = self.update.clone();
+        tokio::spawn(async move {
+            let started = Instant::now();
+            let result = client
+                .execute(&runtime.runtime, &runtime.version, &text)
+                .await;
+            let msg = match result {
+                Ok(output) => ServerMsg::RunFinished {
+                    id,
+                    language: runtime.language,
+                    runtime: runtime.runtime,
+                    version: runtime.version,
+                    compile: output.compile.map(Box::new),
+                    run: output.run.map(Box::new),
+                    duration_ms: started.elapsed().as_millis() as u64,
+                },
+                Err(e) => ServerMsg::RunFailed {
+                    id,
+                    error: e.to_string(),
+                },
+            };
+            let mut run = run_state.lock();
+            run.running = None;
+            run.last = Some(msg.clone());
+            update.send(msg).ok();
+        });
     }
 
     fn apply_edit(&self, id: u64, revision: usize, mut operation: OperationSeq) -> Result<()> {

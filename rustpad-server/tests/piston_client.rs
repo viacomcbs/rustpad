@@ -58,7 +58,10 @@ async fn test_execute_compile_error() {
         "compile": { "stdout": "", "stderr": "error: expected ';'", "output": "error: expected ';'", "code": 1, "signal": null }
     });
     let fake = start(default_runtimes(), Reply::Json(reply)).await;
-    let output = client(&fake.url).execute("c++", "10.2.0", "int main(){}").await.unwrap();
+    let output = client(&fake.url)
+        .execute("c++", "10.2.0", "int main(){}")
+        .await
+        .unwrap();
     assert!(output.run.is_none());
     let compile = output.compile.unwrap();
     assert_eq!(compile.code, Some(1));
@@ -85,7 +88,11 @@ async fn test_execute_killed_by_signal() {
 
 #[tokio::test]
 async fn test_execute_truncates_output() {
-    let fake = start(default_runtimes(), Reply::Json(ok_reply(&"x".repeat(100 * 1024)))).await;
+    let fake = start(
+        default_runtimes(),
+        Reply::Json(ok_reply(&"x".repeat(100 * 1024))),
+    )
+    .await;
     let run = client(&fake.url)
         .execute("python", "3.12.0", "")
         .await
@@ -99,7 +106,10 @@ async fn test_execute_truncates_output() {
 #[tokio::test]
 async fn test_execute_server_error() {
     let fake = start(default_runtimes(), Reply::Status(500)).await;
-    let err = client(&fake.url).execute("python", "3.12.0", "").await.unwrap_err();
+    let err = client(&fake.url)
+        .execute("python", "3.12.0", "")
+        .await
+        .unwrap_err();
     assert_eq!(err, RunError::Unavailable);
     assert_eq!(err.to_string(), "Code runner is unavailable");
 }
@@ -107,7 +117,10 @@ async fn test_execute_server_error() {
 #[tokio::test]
 async fn test_execute_bad_request() {
     let fake = start(default_runtimes(), Reply::Status(400)).await;
-    let err = client(&fake.url).execute("python", "3.12.0", "").await.unwrap_err();
+    let err = client(&fake.url)
+        .execute("python", "3.12.0", "")
+        .await
+        .unwrap_err();
     assert_eq!(err, RunError::Unavailable);
 }
 
@@ -118,7 +131,10 @@ async fn test_execute_timeout() {
         Reply::Slow(Duration::from_millis(800), ok_reply("late")),
     )
     .await;
-    let err = client(&fake.url).execute("python", "3.12.0", "").await.unwrap_err();
+    let err = client(&fake.url)
+        .execute("python", "3.12.0", "")
+        .await
+        .unwrap_err();
     assert_eq!(err, RunError::TimedOut);
     assert_eq!(err.to_string(), "Code runner timed out");
 }
@@ -126,7 +142,10 @@ async fn test_execute_timeout() {
 #[tokio::test]
 async fn test_execute_oversized_body() {
     let fake = start(default_runtimes(), Reply::Raw("x".repeat(2 * 1024 * 1024))).await;
-    let err = client(&fake.url).execute("python", "3.12.0", "").await.unwrap_err();
+    let err = client(&fake.url)
+        .execute("python", "3.12.0", "")
+        .await
+        .unwrap_err();
     assert_eq!(err, RunError::InvalidResponse);
     assert_eq!(err.to_string(), "Code runner returned an invalid response");
 }
@@ -134,7 +153,10 @@ async fn test_execute_oversized_body() {
 #[tokio::test]
 async fn test_execute_invalid_json() {
     let fake = start(default_runtimes(), Reply::Raw("not json".into())).await;
-    let err = client(&fake.url).execute("python", "3.12.0", "").await.unwrap_err();
+    let err = client(&fake.url)
+        .execute("python", "3.12.0", "")
+        .await
+        .unwrap_err();
     assert_eq!(err, RunError::InvalidResponse);
 }
 

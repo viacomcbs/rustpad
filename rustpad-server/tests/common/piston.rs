@@ -63,7 +63,9 @@ pub async fn start(runtimes: Value, reply: Reply) -> FakePiston {
             let reply = reply.clone();
             async move {
                 match reply {
-                    Reply::Json(value) => warp::reply::with_status(value.to_string(), StatusCode::OK),
+                    Reply::Json(value) => {
+                        warp::reply::with_status(value.to_string(), StatusCode::OK)
+                    }
                     Reply::Status(code) => warp::reply::with_status(
                         json!({ "message": "fake failure" }).to_string(),
                         StatusCode::from_u16(code).unwrap(),
