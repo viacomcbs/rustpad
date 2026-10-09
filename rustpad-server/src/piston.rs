@@ -5,8 +5,9 @@ use std::fmt;
 use std::time::Duration;
 
 use anyhow::Context;
-use log::warn;
+use log::{info, warn};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use tokio::{sync::watch, time};
 
 /// Largest stdout or stderr kept from one stage, in bytes.
 pub const MAX_STREAM_BYTES: usize = 64 * 1024;
@@ -19,6 +20,9 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Time allowed for a whole Piston request.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// How often the runtime list is fetched again.
+const REFRESH_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 /// Limits sent with every execution. Piston's own config caps these.
 const RUN_TIMEOUT_MS: u64 = 3000;
@@ -276,6 +280,49 @@ fn truncate_utf8(text: &mut String, max: usize) -> bool {
     }
     text.truncate(end);
     true
+}
+
+/// Piston access shared by every document.
+#[derive(Clone, Debug)]
+pub(crate) struct Runner {
+    /// Client used to run code.
+    pub(crate) client: PistonClient,
+    /// Current list of runnable languages, refreshed in the background.
+    pub(crate) runtimes: watch::Receiver<Vec<Runtime>>,
+}
+
+impl Runner {
+    /// Starts fetching runtimes in the background.
+    pub(crate) fn start(client: PistonClient) -> Self {
+        let (tx, rx) = watch::channel(Vec::new());
+        tokio::spawn(refresher(client.clone(), tx));
+        Self {
+            client,
+            runtimes: rx,
+        }
+    }
+}
+
+/// Fetches the runtime list now and then every `REFRESH_INTERVAL`.
+async fn refresher(client: PistonClient, tx: watch::Sender<Vec<Runtime>>) {
+    let monaco = monaco_languages();
+    while !tx.is_closed() {
+        match client.runtimes().await {
+            Ok(available) => {
+                let resolved = resolve(&monaco, &available);
+                tx.send_if_modified(|current| {
+                    if *current == resolved {
+                        return false;
+                    }
+                    info!("Piston runtimes: {} languages", resolved.len());
+                    *current = resolved;
+                    true
+                });
+            }
+            Err(e) => warn!("failed to fetch Piston runtimes: {e}"),
+        }
+        time::sleep(REFRESH_INTERVAL).await;
+    }
 }
 
 #[cfg(test)]

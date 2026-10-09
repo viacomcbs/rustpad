@@ -13,7 +13,11 @@ use serde::Serialize;
 use tokio::time::{self, Instant};
 use warp::{filters::BoxedFilter, ws::Ws, Filter, Rejection, Reply};
 
-use crate::{database::Database, rustpad::Rustpad};
+use crate::{
+    database::Database,
+    piston::{PistonClient, Runner},
+    rustpad::Rustpad,
+};
 
 pub mod database;
 pub mod piston;
@@ -58,6 +62,8 @@ struct ServerState {
     documents: Arc<DashMap<String, Document>>,
     /// Connection to the database pool, if persistence is enabled.
     database: Option<Database>,
+    /// Piston access for running code, if enabled.
+    runner: Option<Runner>,
 }
 
 /// Statistics about the server, returned from an API endpoint.
@@ -78,6 +84,8 @@ pub struct ServerConfig {
     pub expiry_days: u32,
     /// Database object, for persistence if desired.
     pub database: Option<Database>,
+    /// Piston client for running code, if enabled.
+    pub piston: Option<PistonClient>,
 }
 
 impl Default for ServerConfig {
@@ -85,6 +93,7 @@ impl Default for ServerConfig {
         Self {
             expiry_days: 1,
             database: None,
+            piston: None,
         }
     }
 }
@@ -107,6 +116,7 @@ fn backend(config: ServerConfig) -> BoxedFilter<(impl Reply,)> {
     let state = ServerState {
         documents: Default::default(),
         database: config.database,
+        runner: config.piston.map(Runner::start),
     };
     tokio::spawn(cleaner(state.clone(), config.expiry_days));
 
@@ -140,10 +150,11 @@ async fn socket_handler(id: String, ws: Ws, state: ServerState) -> Result<impl R
     let mut entry = match state.documents.entry(id.clone()) {
         Entry::Occupied(e) => e.into_ref(),
         Entry::Vacant(e) => {
-            let rustpad = Arc::new(match &state.database {
+            let rustpad = match &state.database {
                 Some(db) => db.load(&id).await.map(Rustpad::from).unwrap_or_default(),
                 None => Rustpad::default(),
-            });
+            };
+            let rustpad = Arc::new(rustpad.with_runner(state.runner.clone()));
             if let Some(db) = &state.database {
                 tokio::spawn(persister(id, Arc::clone(&rustpad), db.clone()));
             }

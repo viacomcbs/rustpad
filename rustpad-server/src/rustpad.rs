@@ -9,9 +9,10 @@ use log::{info, warn};
 use operational_transform::OperationSeq;
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use serde::{Deserialize, Serialize};
-use tokio::sync::{broadcast, Notify};
+use tokio::sync::{broadcast, watch, Notify};
 use warp::ws::{Message, WebSocket};
 
+use crate::piston::{Runner, Runtime};
 use crate::{database::PersistedDocument, ot::transform_index};
 
 /// The main object representing a collaborative session.
@@ -26,6 +27,8 @@ pub struct Rustpad {
     update: broadcast::Sender<ServerMsg>,
     /// Set to true when the document is destroyed.
     killed: AtomicBool,
+    /// Piston access, if code execution is enabled.
+    runner: Option<Runner>,
 }
 
 /// Shared state involving multiple users, protected by a lock.
@@ -88,6 +91,8 @@ enum ServerMsg {
     UserInfo { id: u64, info: Option<UserInfo> },
     /// Broadcasts a user's cursor position.
     UserCursor { id: u64, data: CursorData },
+    /// Lists the languages this server can run.
+    Runtimes(Vec<Runtime>),
 }
 
 impl From<ServerMsg> for Message {
@@ -106,6 +111,7 @@ impl Default for Rustpad {
             notify: Default::default(),
             update: tx,
             killed: AtomicBool::new(false),
+            runner: None,
         }
     }
 }
@@ -177,10 +183,20 @@ impl Rustpad {
         self.killed.load(Ordering::Relaxed)
     }
 
+    /// Enables code execution for this document.
+    pub(crate) fn with_runner(mut self, runner: Option<Runner>) -> Self {
+        self.runner = runner;
+        self
+    }
+
     async fn handle_connection(&self, id: u64, mut socket: WebSocket) -> Result<()> {
         let mut update_rx = self.update.subscribe();
 
-        let mut revision: usize = self.send_initial(id, &mut socket).await?;
+        let mut runtimes_rx = self.runner.as_ref().map(|r| r.runtimes.clone());
+
+        let mut revision: usize = self
+            .send_initial(id, &mut socket, runtimes_rx.as_mut())
+            .await?;
 
         loop {
             // In order to avoid the "lost wakeup" problem, we first request a
@@ -199,6 +215,9 @@ impl Rustpad {
                 update = update_rx.recv() => {
                     socket.send(update?.into()).await?;
                 }
+                Some(runtimes) = next_runtimes(&mut runtimes_rx) => {
+                    socket.send(ServerMsg::Runtimes(runtimes).into()).await?;
+                }
                 result = socket.next() => {
                     match result {
                         None => break,
@@ -213,7 +232,12 @@ impl Rustpad {
         Ok(())
     }
 
-    async fn send_initial(&self, id: u64, socket: &mut WebSocket) -> Result<usize> {
+    async fn send_initial(
+        &self,
+        id: u64,
+        socket: &mut WebSocket,
+        runtimes_rx: Option<&mut watch::Receiver<Vec<Runtime>>>,
+    ) -> Result<usize> {
         socket.send(ServerMsg::Identity(id).into()).await?;
         let mut messages = Vec::new();
         let revision = {
@@ -238,6 +262,9 @@ impl Rustpad {
                     id,
                     data: data.clone(),
                 });
+            }
+            if let Some(rx) = runtimes_rx {
+                messages.push(ServerMsg::Runtimes(rx.borrow_and_update().clone()));
             }
             state.operations.len()
         };
@@ -336,5 +363,16 @@ impl Rustpad {
         state.operations.push(UserOperation { id, operation });
         state.text = new_text;
         Ok(())
+    }
+}
+
+/// Waits for the runtime list to change, or forever if code execution is off.
+async fn next_runtimes(rx: &mut Option<watch::Receiver<Vec<Runtime>>>) -> Option<Vec<Runtime>> {
+    match rx {
+        Some(rx) => {
+            rx.changed().await.ok()?;
+            Some(rx.borrow_and_update().clone())
+        }
+        None => future::pending().await,
     }
 }

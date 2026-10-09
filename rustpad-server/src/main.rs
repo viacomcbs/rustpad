@@ -1,4 +1,4 @@
-use rustpad_server::{server, database::Database, ServerConfig};
+use rustpad_server::{database::Database, piston::PistonClient, server, ServerConfig};
 
 #[tokio::main]
 async fn main() {
@@ -23,6 +23,9 @@ async fn main() {
             ),
             Err(_) => None,
         },
+        piston: std::env::var("PISTON_URL")
+            .ok()
+            .map(|url| PistonClient::new(&url).expect("Unable to parse PISTON_URL")),
     };
 
     warp::serve(server(config)).run(([0, 0, 0, 0], port)).await;
