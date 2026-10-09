@@ -141,6 +141,8 @@ impl PistonClient {
     pub fn with_timeouts(base_url: &str, connect: Duration, total: Duration) -> anyhow::Result<Self> {
         let base = reqwest::Url::parse(base_url).context("invalid Piston URL")?;
         let http = reqwest::Client::builder()
+            // Piston is reached directly on the internal network, never through a proxy.
+            .no_proxy()
             .connect_timeout(connect)
             .timeout(total)
             .build()
