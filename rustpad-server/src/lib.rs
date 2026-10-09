@@ -16,6 +16,7 @@ use warp::{filters::BoxedFilter, ws::Ws, Filter, Rejection, Reply};
 use crate::{database::Database, rustpad::Rustpad};
 
 pub mod database;
+pub mod piston;
 mod ot;
 mod rustpad;
 

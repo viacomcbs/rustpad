@@ -127,7 +127,7 @@ Server → client:
   changes. It is never sent when Piston is off. The client hides the feature
   until it receives `Runtimes`.
 - `compile` has the same shape as `run`, or is `null` for interpreted
-  languages.
+  languages. `run` is `null` when compilation fails.
 - `send_initial` replays `RunStarted` if a run is in progress, and
   `last_run` if one exists, so late joiners see the current state.
 - A worst-case `RunFinished` is about 260 KiB, which fits warp's frame limit and
