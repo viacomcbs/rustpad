@@ -1,11 +1,29 @@
 //! Client for the Piston code execution engine.
 
 use std::cmp::Ordering;
+use std::fmt;
+use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
+use anyhow::Context;
+use log::warn;
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 /// Largest stdout or stderr kept from one stage, in bytes.
 pub const MAX_STREAM_BYTES: usize = 64 * 1024;
+
+/// Largest Piston response accepted, in bytes.
+const MAX_BODY_BYTES: usize = 1024 * 1024;
+
+/// Time allowed to open a connection to Piston.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Time allowed for a whole Piston request.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// Limits sent with every execution. Piston's own config caps these.
+const RUN_TIMEOUT_MS: u64 = 3000;
+const COMPILE_TIMEOUT_MS: u64 = 10000;
+const MEMORY_LIMIT_BYTES: i64 = 256 * 1024 * 1024;
 
 /// Monaco language IDs whose Piston language name differs.
 const OVERRIDES: &[(&str, &str)] = &[("cpp", "c++"), ("shell", "bash")];
@@ -65,6 +83,145 @@ pub struct ExecOutput {
     pub compile: Option<RunStage>,
     /// Run stage, absent if compilation failed.
     pub run: Option<RunStage>,
+}
+
+/// Why a Piston call failed. `Display` gives a message safe to show users.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RunError {
+    /// Piston could not be reached, or answered with an error status.
+    Unavailable,
+    /// Piston did not answer in time.
+    TimedOut,
+    /// Piston's answer was too large or not valid JSON.
+    InvalidResponse,
+}
+
+impl fmt::Display for RunError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            RunError::Unavailable => "Code runner is unavailable",
+            RunError::TimedOut => "Code runner timed out",
+            RunError::InvalidResponse => "Code runner returned an invalid response",
+        })
+    }
+}
+
+impl std::error::Error for RunError {}
+
+/// HTTP client for the two Piston endpoints Rustpad uses.
+#[derive(Clone, Debug)]
+pub struct PistonClient {
+    http: reqwest::Client,
+    base: String,
+}
+
+#[derive(Serialize)]
+struct ExecRequest<'a> {
+    language: &'a str,
+    version: &'a str,
+    files: [SourceFile<'a>; 1],
+    compile_timeout: u64,
+    run_timeout: u64,
+    compile_memory_limit: i64,
+    run_memory_limit: i64,
+}
+
+#[derive(Serialize)]
+struct SourceFile<'a> {
+    content: &'a str,
+}
+
+impl PistonClient {
+    /// Creates a client with the default timeouts.
+    pub fn new(base_url: &str) -> anyhow::Result<Self> {
+        Self::with_timeouts(base_url, CONNECT_TIMEOUT, REQUEST_TIMEOUT)
+    }
+
+    /// Creates a client with custom timeouts.
+    pub fn with_timeouts(base_url: &str, connect: Duration, total: Duration) -> anyhow::Result<Self> {
+        let base = reqwest::Url::parse(base_url).context("invalid Piston URL")?;
+        let http = reqwest::Client::builder()
+            .connect_timeout(connect)
+            .timeout(total)
+            .build()
+            .context("failed to build HTTP client")?;
+        Ok(Self {
+            http,
+            base: base.as_str().trim_end_matches('/').to_owned(),
+        })
+    }
+
+    /// Lists the runtimes installed in Piston.
+    pub async fn runtimes(&self) -> Result<Vec<PistonRuntime>, RunError> {
+        let response = self
+            .http
+            .get(format!("{}/api/v2/runtimes", self.base))
+            .send()
+            .await
+            .map_err(from_reqwest)?;
+        parse(response).await
+    }
+
+    /// Runs `source` as a single file with the given runtime.
+    pub async fn execute(
+        &self,
+        language: &str,
+        version: &str,
+        source: &str,
+    ) -> Result<ExecOutput, RunError> {
+        let request = ExecRequest {
+            language,
+            version,
+            files: [SourceFile { content: source }],
+            compile_timeout: COMPILE_TIMEOUT_MS,
+            run_timeout: RUN_TIMEOUT_MS,
+            compile_memory_limit: MEMORY_LIMIT_BYTES,
+            run_memory_limit: MEMORY_LIMIT_BYTES,
+        };
+        let response = self
+            .http
+            .post(format!("{}/api/v2/execute", self.base))
+            .json(&request)
+            .send()
+            .await
+            .map_err(from_reqwest)?;
+        let mut output: ExecOutput = parse(response).await?;
+        for stage in output.compile.iter_mut().chain(output.run.iter_mut()) {
+            stage.truncate();
+        }
+        Ok(output)
+    }
+}
+
+/// Reads a capped response body and decodes it as JSON.
+async fn parse<T: DeserializeOwned>(mut response: reqwest::Response) -> Result<T, RunError> {
+    let status = response.status();
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(from_reqwest)? {
+        if body.len() + chunk.len() > MAX_BODY_BYTES {
+            warn!("Piston response exceeded {MAX_BODY_BYTES} bytes");
+            return Err(RunError::InvalidResponse);
+        }
+        body.extend_from_slice(&chunk);
+    }
+    if !status.is_success() {
+        warn!("Piston returned {status}: {}", String::from_utf8_lossy(&body));
+        return Err(RunError::Unavailable);
+    }
+    serde_json::from_slice(&body).map_err(|e| {
+        warn!("invalid Piston response: {e}");
+        RunError::InvalidResponse
+    })
+}
+
+/// Logs a transport error and maps it to a user-facing one.
+fn from_reqwest(e: reqwest::Error) -> RunError {
+    warn!("Piston request failed: {e}");
+    if e.is_timeout() {
+        RunError::TimedOut
+    } else {
+        RunError::Unavailable
+    }
 }
 
 /// Returns the Monaco language IDs offered by the editor.

@@ -1,3 +1,4 @@
+pub mod piston;
 use anyhow::{anyhow, Result};
 use serde_json::Value;
 use warp::{filters::BoxedFilter, test::WsClient, Reply};
