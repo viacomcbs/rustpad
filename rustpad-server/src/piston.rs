@@ -13,7 +13,7 @@ use tokio::{sync::watch, time};
 pub const MAX_STREAM_BYTES: usize = 64 * 1024;
 
 /// Largest Piston response accepted, in bytes.
-const MAX_BODY_BYTES: usize = 1024 * 1024;
+const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 
 /// Time allowed to open a connection to Piston.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
@@ -23,6 +23,13 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// How often the runtime list is fetched again.
 const REFRESH_INTERVAL: Duration = Duration::from_secs(5 * 60);
+
+/// First wait before fetching again while there are no runtimes. Doubles on
+/// each consecutive miss, up to `MAX_RETRY_INTERVAL`.
+const RETRY_INTERVAL: Duration = Duration::from_secs(1);
+
+/// Longest wait between fetches while there are no runtimes.
+const MAX_RETRY_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Limits sent with every execution. Piston's own config caps these.
 const RUN_TIMEOUT_MS: u64 = 3000;
@@ -151,6 +158,7 @@ impl PistonClient {
         let http = reqwest::Client::builder()
             // Piston is reached directly on the internal network, never through a proxy.
             .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(connect)
             .timeout(total)
             .build()
@@ -301,8 +309,18 @@ pub(crate) struct Runner {
 impl Runner {
     /// Starts fetching runtimes in the background.
     pub(crate) fn start(client: PistonClient) -> Self {
+        Self::start_with_intervals(client, REFRESH_INTERVAL, RETRY_INTERVAL)
+    }
+
+    /// Like `start`, with custom waits. `retry` is the first wait after a failed
+    /// or empty fetch; it doubles on each miss up to `MAX_RETRY_INTERVAL`.
+    pub(crate) fn start_with_intervals(
+        client: PistonClient,
+        refresh: Duration,
+        retry: Duration,
+    ) -> Self {
         let (tx, rx) = watch::channel(Vec::new());
-        tokio::spawn(refresher(client.clone(), tx));
+        tokio::spawn(refresher(client.clone(), tx, refresh, retry));
         Self {
             client,
             runtimes: rx,
@@ -310,11 +328,18 @@ impl Runner {
     }
 }
 
-/// Fetches the runtime list now and then every `REFRESH_INTERVAL`.
-async fn refresher(client: PistonClient, tx: watch::Sender<Vec<Runtime>>) {
+/// Fetches the runtime list now, then every `refresh`. While the list is empty
+/// or the fetch fails, retries after `retry`, doubling up to `MAX_RETRY_INTERVAL`.
+async fn refresher(
+    client: PistonClient,
+    tx: watch::Sender<Vec<Runtime>>,
+    refresh: Duration,
+    retry: Duration,
+) {
     let monaco = monaco_languages();
+    let mut backoff = retry;
     while !tx.is_closed() {
-        match client.runtimes().await {
+        let resolved = match client.runtimes().await {
             Ok(available) => {
                 let resolved = resolve(&monaco, &available);
                 tx.send_if_modified(|current| {
@@ -322,13 +347,23 @@ async fn refresher(client: PistonClient, tx: watch::Sender<Vec<Runtime>>) {
                         return false;
                     }
                     info!("Piston runtimes: {} languages", resolved.len());
-                    *current = resolved;
+                    *current = resolved.clone();
                     true
                 });
+                resolved
             }
-            Err(e) => warn!("failed to fetch Piston runtimes: {e}"),
+            Err(e) => {
+                warn!("failed to fetch Piston runtimes: {e}");
+                Vec::new()
+            }
+        };
+        if resolved.is_empty() {
+            time::sleep(backoff).await;
+            backoff = (backoff * 2).min(MAX_RETRY_INTERVAL);
+        } else {
+            backoff = retry;
+            time::sleep(refresh).await;
         }
-        time::sleep(REFRESH_INTERVAL).await;
     }
 }
 
@@ -461,5 +496,43 @@ mod tests {
         assert_eq!(stage.stdout, "hi\n");
         assert_eq!(stage.code, Some(0));
         assert!(!stage.truncated);
+    }
+
+    #[tokio::test]
+    async fn refresher_retries_until_runtimes_appear() {
+        use std::sync::atomic::AtomicUsize;
+        use std::sync::atomic::Ordering as AtomicOrdering;
+        use std::sync::Arc;
+        use warp::{http::StatusCode, Filter};
+
+        // First call fails with 500, second returns an empty list, then a real one.
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&calls);
+        let route = warp::path!("api" / "v2" / "runtimes").map(move || {
+            match counter.fetch_add(1, AtomicOrdering::SeqCst) {
+                0 => warp::reply::with_status("{}".to_string(), StatusCode::INTERNAL_SERVER_ERROR),
+                1 => warp::reply::with_status("[]".to_string(), StatusCode::OK),
+                _ => warp::reply::with_status(
+                    r#"[{"language":"python","version":"3.12.0","aliases":[]}]"#.to_string(),
+                    StatusCode::OK,
+                ),
+            }
+        });
+        let (addr, server) = warp::serve(route).bind_ephemeral(([127, 0, 0, 1], 0));
+        tokio::spawn(server);
+
+        let client = PistonClient::new(&format!("http://{addr}")).unwrap();
+        // The refresh interval is far beyond the test, so only retries can succeed.
+        let runner = Runner::start_with_intervals(
+            client,
+            Duration::from_secs(3600),
+            Duration::from_millis(50),
+        );
+        let mut runtimes = runner.runtimes.clone();
+        time::timeout(Duration::from_secs(2), runtimes.wait_for(|r| !r.is_empty()))
+            .await
+            .expect("runtimes should appear within 2 s")
+            .unwrap();
+        assert!(calls.load(AtomicOrdering::SeqCst) >= 3);
     }
 }
