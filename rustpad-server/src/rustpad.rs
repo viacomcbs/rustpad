@@ -165,6 +165,10 @@ impl From<PersistedDocument> for Rustpad {
     }
 }
 
+/// Largest document that can be run, in bytes. Piston's request body limit is
+/// about 100 kB.
+const MAX_RUN_CODE_BYTES: usize = 64 * 1024;
+
 impl Rustpad {
     /// Handle a connection from a WebSocket.
     pub async fn on_connection(&self, socket: WebSocket) {
@@ -400,6 +404,15 @@ impl Rustpad {
             self.update.send(msg).ok();
             return;
         };
+        if text.len() > MAX_RUN_CODE_BYTES {
+            let msg = ServerMsg::RunFailed {
+                id,
+                error: "Code too large to run (64 KiB limit)".into(),
+            };
+            run.last = Some(msg.clone());
+            self.update.send(msg).ok();
+            return;
+        }
         run.running = Some(id);
         self.update.send(ServerMsg::RunStarted { id }).ok();
         drop(run);

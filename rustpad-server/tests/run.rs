@@ -226,6 +226,22 @@ async fn test_unsupported_language() -> Result<()> {
 }
 
 #[tokio::test]
+async fn test_code_too_large() -> Result<()> {
+    pretty_env_logger::try_init().ok();
+    let fake = start(default_runtimes(), Reply::Json(ok_reply(""))).await;
+    let filter = server(config(&fake));
+    let mut alice = open_pad(&filter, "pad", "python", &"x".repeat(64 * 1024 + 1)).await?;
+
+    alice.send(&json!("Run")).await;
+    assert_eq!(
+        alice.recv().await?,
+        json!({ "RunFailed": { "id": 0, "error": "Code too large to run (64 KiB limit)" } })
+    );
+    assert!(fake.requests.lock().is_empty());
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_run_without_language() -> Result<()> {
     pretty_env_logger::try_init().ok();
     let fake = start(default_runtimes(), Reply::Json(ok_reply(""))).await;
