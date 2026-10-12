@@ -87,10 +87,41 @@ following environment variables on startup:
   be retained between server restarts and after their in-memory data structures
   expire. (When deploying a Docker container, this should point to the path of a
   mounted volume.)
+- `PISTON_URL`: Base URL of a [Piston](https://github.com/engineer-man/piston)
+  server, such as `http://piston:2000`. If set, users can run the pad's code and
+  everyone in the pad sees the output. Piston must be reachable only from
+  Rustpad.
 - `PORT`: Which local port to listen for HTTP connections on (defaults to 3030).
 - `RUST_LOG`: Directives that control application logging, see the
   [env_logger](https://docs.rs/env_logger/#enabling-logging) docs for more
   information.
+
+## Code execution
+
+To run Rustpad with a local Piston, start the compose stack from the repository
+root and install the default runtimes:
+
+```
+docker compose -f docker-compose/docker-compose.yml up --build -d
+docker-compose/install-runtimes.sh
+docker compose -f docker-compose/docker-compose.yml restart rustpad
+```
+
+Then open `http://localhost:3030`. The Run button appears under the language
+picker, and `Ctrl/Cmd+Enter` runs the code from the editor.
+
+Piston runs untrusted code in a privileged container. A production deployment
+must meet these requirements:
+
+- Piston runs on a dedicated node pool with no cloud permissions.
+- Only Rustpad pods can reach Piston, and Piston has no egress.
+- Runtimes are baked into the Piston image.
+- Piston's `PISTON_*` limits are at least Rustpad's per-request limits: 3 s run,
+  10 s compile, 256 MiB memory. Keep `PISTON_OUTPUT_MAX_SIZE` between 64 KiB
+  and 128 KiB.
+
+See `docs/superpowers/specs/2026-10-09-code-execution-design.md` for the full
+list.
 
 ## Deployment
 

@@ -1,0 +1,46 @@
+# Local development stack: Rustpad with a Piston code runner.
+# Run from the repository root:
+#   docker compose -f docker-compose/docker-compose.yml up --build -d
+#   docker-compose/install-runtimes.sh
+
+services:
+  rustpad:
+    build: ..
+    environment:
+      PISTON_URL: http://piston:2000
+      RUST_LOG: info
+    ports:
+      - 127.0.0.1:3030:3030
+    depends_on:
+      - piston
+
+  piston:
+    # Pin by digest: docker buildx imagetools inspect ghcr.io/engineer-man/piston:latest
+    image: ghcr.io/engineer-man/piston:latest
+    # Piston's isolate sandbox needs cgroups, which needs a privileged container.
+    privileged: true
+    environment:
+      # Ceilings for every run. Rustpad's per-request limits must not exceed them.
+      PISTON_RUN_TIMEOUT: "3000"
+      PISTON_COMPILE_TIMEOUT: "10000"
+      PISTON_RUN_MEMORY_LIMIT: "268435456"
+      PISTON_COMPILE_MEMORY_LIMIT: "268435456"
+      # Slightly above Rustpad's 64 KiB cut, so truncation shows in the UI,
+      # and well below its 1 MiB response cap.
+      PISTON_OUTPUT_MAX_SIZE: "81920"
+      PISTON_MAX_PROCESS_COUNT: "64"
+      PISTON_MAX_OPEN_FILES: "256"
+      PISTON_MAX_FILE_SIZE: "10000000"
+      PISTON_DISABLE_NETWORKING: "true"
+    volumes:
+      - piston-packages:/piston/packages
+    tmpfs:
+      - /piston/jobs:exec,uid=1000,gid=1000,mode=711
+      - /tmp:exec
+
+volumes:
+  piston-packages:
+
+networks:
+  default:
+    name: rustpad-piston
