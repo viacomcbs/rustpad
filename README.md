@@ -107,6 +107,7 @@ To run Rustpad with a local Piston, start the compose stack from the repository
 root and install the default runtimes:
 
 ```
+./build.sh
 podman compose -f compose/compose.yml up --build -d
 compose/install-runtimes.sh
 podman compose -f compose/compose.yml restart rustpad
@@ -141,9 +142,23 @@ version of this image from Docker Hub. It has multi-platform support for
 docker pull ekzhang/rustpad
 ```
 
-(You can also manually build this image with `docker build -t rustpad .` in the
-project root directory.) To run locally, execute the following command, then
-open `http://localhost:3030` in your browser.
+To build the image yourself, compile on the host first. `build.sh` builds the
+frontend and a static Linux server binary, and the `Dockerfile` only copies them
+into the image. The build runs on macOS or Linux and needs `rustup`, `zig`,
+`cargo-zigbuild`, `wasm-pack` and `npm`. It targets the host architecture; set
+`ARCH=amd64`, `ARCH=arm64` or `ARCH="amd64 arm64"` to choose.
+
+```
+./build.sh
+podman build -t rustpad .
+```
+
+TODO: CI still builds the image with the `Dockerfile` alone, which now expects
+`build.sh` output. Update `.github/workflows/ci.yml` to run
+`ARCH="amd64 arm64" ./build.sh` first.
+
+To run locally, execute the following command, then open
+`http://localhost:3030` in your browser.
 
 ```
 docker run --rm -dp 3030:3030 ekzhang/rustpad

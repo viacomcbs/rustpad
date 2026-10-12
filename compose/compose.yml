@@ -1,5 +1,5 @@
 # Local development stack: Rustpad with a Piston code runner.
-# Run from the repository root:
+# Run from the repository root, after ./build.sh:
 #   podman compose -f compose/compose.yml up --build -d
 #   compose/install-runtimes.sh
 
