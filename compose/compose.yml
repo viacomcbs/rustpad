@@ -1,6 +1,6 @@
 # Local development stack: Rustpad with a Piston code runner.
 # Run from the repository root:
-#   docker compose -f compose/compose.yml up --build -d
+#   podman compose -f compose/compose.yml up --build -d
 #   compose/install-runtimes.sh
 
 services:
@@ -15,7 +15,7 @@ services:
       - piston
 
   piston:
-    # Pin by digest: docker buildx imagetools inspect ghcr.io/engineer-man/piston:latest
+    # Pin by digest: podman pull ghcr.io/engineer-man/piston:latest && podman image inspect --format "{{.Digest}}" ghcr.io/engineer-man/piston:latest
     image: ghcr.io/engineer-man/piston:latest
     # Piston's isolate sandbox needs cgroups, which needs a privileged container.
     privileged: true

@@ -98,13 +98,18 @@ following environment variables on startup:
 
 ## Code execution
 
+The local stack needs Podman with a compose provider (`podman-compose` or
+Docker Compose), on a host with pure cgroup v2. Piston manages cgroups for its
+sandbox, so on macOS run the Podman machine in rootful mode
+(`podman machine set --rootful`).
+
 To run Rustpad with a local Piston, start the compose stack from the repository
 root and install the default runtimes:
 
 ```
-docker compose -f compose/compose.yml up --build -d
+podman compose -f compose/compose.yml up --build -d
 compose/install-runtimes.sh
-docker compose -f compose/compose.yml restart rustpad
+podman compose -f compose/compose.yml restart rustpad
 ```
 
 Then open `http://localhost:3030`. The Run button appears under the language

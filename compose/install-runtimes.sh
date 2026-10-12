@@ -9,7 +9,7 @@ packages=(python node typescript go rust java gcc mono bash)
 # Calls Piston's API on localhost from inside its own container. The Piston
 # image has no curl, so the request runs through its python3.
 piston() {
-  docker compose -f "$compose_file" exec -T piston python3 - "$@" <<'PY'
+  podman compose -f "$compose_file" exec -T piston python3 - "$@" <<'PY'
 import sys, urllib.error, urllib.request
 
 method, path = sys.argv[1], sys.argv[2]
