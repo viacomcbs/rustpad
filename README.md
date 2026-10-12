@@ -119,6 +119,8 @@ must meet these requirements:
 - Piston's `PISTON_*` limits are at least Rustpad's per-request limits: 3 s run,
   10 s compile, 256 MiB memory. Keep `PISTON_OUTPUT_MAX_SIZE` between 64 KiB
   and 128 KiB.
+- `PISTON_MAX_CONCURRENT_JOBS` times 256 MiB fits within the Piston pod's
+  memory limit.
 
 See `docs/superpowers/specs/2026-10-09-code-execution-design.md` for the full
 list.

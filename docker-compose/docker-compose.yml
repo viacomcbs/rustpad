@@ -26,7 +26,7 @@ services:
       PISTON_RUN_MEMORY_LIMIT: "268435456"
       PISTON_COMPILE_MEMORY_LIMIT: "268435456"
       # Slightly above Rustpad's 64 KiB cut, so truncation shows in the UI,
-      # and well below its 1 MiB response cap.
+      # and well below its 4 MiB response cap.
       PISTON_OUTPUT_MAX_SIZE: "81920"
       PISTON_MAX_PROCESS_COUNT: "64"
       PISTON_MAX_OPEN_FILES: "256"

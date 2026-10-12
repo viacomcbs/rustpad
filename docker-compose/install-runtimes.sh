@@ -13,7 +13,8 @@ for package in "${packages[@]}"; do
   echo "Installing ${package}"
   piston -X POST http://piston:2000/api/v2/packages \
     -H 'Content-Type: application/json' \
-    -d "{\"language\":\"${package}\",\"version\":\"*\"}"
+    -d "{\"language\":\"${package}\",\"version\":\"*\"}" \
+    || echo "  failed or already installed: ${package}"
   echo
 done
 

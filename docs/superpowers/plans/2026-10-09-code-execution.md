@@ -15,7 +15,7 @@
 - `PISTON_URL` unset means the feature is off and the server's messages are exactly as before; every existing test in `rustpad-server/tests/` passes unchanged except for the one `ServerConfig { .. }` literal in `persist.rs`.
 - Rustpad calls only `GET /api/v2/runtimes` and `POST /api/v2/execute`. Never `/api/v2/packages`.
 - Piston client timeouts: connect 2 s, total 20 s (constructor fields).
-- Response body cap: 1 MiB (`1024 * 1024` bytes); larger is an `InvalidResponse` error.
+- Response body cap: 4 MiB (`4 * 1024 * 1024` bytes); larger is an `InvalidResponse` error.
 - Per-stream output cap: 64 KiB (`64 * 1024` bytes), cut on a UTF-8 boundary, `truncated: true`.
 - Per-request limits: `run_timeout` 3000, `compile_timeout` 10000, `run_memory_limit` and `compile_memory_limit` 268435456.
 - User-facing errors, verbatim: `Code runner is unavailable`, `Code runner timed out`, `Code runner returned an invalid response`, `No runtime for <language>`.

@@ -41,7 +41,7 @@ Behaviour:
 
 - Connect timeout 2 s, total request timeout 20 s. Both are constructor fields
   so tests can shrink them.
-- The response body is capped at 1 MiB; a larger body is an error.
+- The response body is capped at 4 MiB; a larger body is an error.
 - `stdout` and `stderr` of each stage are cut to 64 KiB on a UTF-8 character
   boundary, with `truncated: true` set on the stage.
 - Errors map to a fixed set of user-facing messages ("Code runner is
@@ -93,8 +93,10 @@ On `ClientMsg::Run` from user `id`:
 2. Under the existing state lock, take a snapshot of the text and language.
 3. If the language has no runtime, store and broadcast `RunFailed`
    ("No runtime for <language>"), then stop.
-4. Set `running`, broadcast `RunStarted { id }`.
-5. In a spawned task, call `execute`, then store and broadcast `RunFinished`
+4. If the code is over 64 KiB, store and broadcast `RunFailed`
+   ("Code too large to run (64 KiB limit)"), then stop.
+5. Set `running`, broadcast `RunStarted { id }`.
+6. In a spawned task, call `execute`, then store and broadcast `RunFinished`
    or `RunFailed`, and clear `running`.
 
 Results never go to SQLite and vanish when the document expires.
@@ -130,8 +132,7 @@ Server → client:
   languages. `run` is `null` when compilation fails.
 - `send_initial` replays `RunStarted` if a run is in progress, and
   `last_run` if one exists, so late joiners see the current state.
-- A worst-case `RunFinished` is about 260 KiB, which fits warp's frame limit and
-  the existing broadcast channel.
+- A worst-case `RunFinished` is about 1.5 MiB once control bytes are JSON-escaped, which fits warp's frame limit.
 
 ## Frontend
 

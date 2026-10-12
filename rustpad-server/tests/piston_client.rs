@@ -141,7 +141,7 @@ async fn test_execute_timeout() {
 
 #[tokio::test]
 async fn test_execute_oversized_body() {
-    let fake = start(default_runtimes(), Reply::Raw("x".repeat(2 * 1024 * 1024))).await;
+    let fake = start(default_runtimes(), Reply::Raw("x".repeat(5 * 1024 * 1024))).await;
     let err = client(&fake.url)
         .execute("python", "3.12.0", "")
         .await
