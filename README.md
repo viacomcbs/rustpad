@@ -99,9 +99,26 @@ following environment variables on startup:
 ## Code execution
 
 The local stack needs Podman with a compose provider (`podman-compose` or
-Docker Compose), on a host with pure cgroup v2. Piston manages cgroups for its
-sandbox, so on macOS run the Podman machine in rootful mode
-(`podman machine set --rootful`).
+Docker Compose), on a host with pure cgroup v2. Piston is amd64 only. On a Mac
+with Apple silicon, the stack needs:
+
+- macOS 26 or later.
+- A rootful Podman machine with Rosetta. Add this to
+  `~/.config/containers/containers.conf` before you create the machine:
+
+  ```toml
+  [machine]
+  rosetta = true
+  ```
+
+  Then create it with `podman machine init --rootful`. To check, run
+  `podman machine ssh ls /proc/sys/fs/binfmt_misc`. The list must include
+  `rosetta`.
+
+C# doesn't run under Rosetta.
+
+On macOS 15 or earlier, Piston can't run locally. Run Rustpad with `PISTON_URL`
+pointing to a Piston server on an amd64 host.
 
 To run Rustpad with a local Piston, start the compose stack from the repository
 root and install the default runtimes:
@@ -152,10 +169,6 @@ into the image. The build runs on macOS or Linux and needs `rustup`, `zig`,
 ./build.sh
 podman build -t rustpad .
 ```
-
-TODO: CI still builds the image with the `Dockerfile` alone, which now expects
-`build.sh` output. Update `.github/workflows/ci.yml` to run
-`ARCH="amd64 arm64" ./build.sh` first.
 
 To run locally, execute the following command, then open
 `http://localhost:3030` in your browser.

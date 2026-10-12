@@ -15,8 +15,8 @@ services:
       - piston
 
   piston:
-    # Pin by digest: podman pull ghcr.io/engineer-man/piston:latest && podman image inspect --format "{{.Digest}}" ghcr.io/engineer-man/piston:latest
-    image: ghcr.io/engineer-man/piston:latest
+    # To move the pin: podman pull ghcr.io/engineer-man/piston:latest && podman image inspect --format "{{.Digest}}" ghcr.io/engineer-man/piston:latest
+    image: ghcr.io/engineer-man/piston@sha256:2f66b7456189c4d713aa986d98eccd0b6ee16d26c7ec5f21b30e942756fd127a
     # Piston's isolate sandbox needs cgroups, which needs a privileged container.
     privileged: true
     environment:
@@ -35,7 +35,7 @@ services:
     volumes:
       - piston-packages:/piston/packages
     tmpfs:
-      - /piston/jobs:exec,uid=1000,gid=1000,mode=711
+      - /piston/jobs:exec,U,mode=711
       - /tmp:exec
 
 volumes:
