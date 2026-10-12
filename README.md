@@ -102,9 +102,9 @@ To run Rustpad with a local Piston, start the compose stack from the repository
 root and install the default runtimes:
 
 ```
-docker compose -f docker-compose/docker-compose.yml up --build -d
-docker-compose/install-runtimes.sh
-docker compose -f docker-compose/docker-compose.yml restart rustpad
+docker compose -f compose/compose.yml up --build -d
+compose/install-runtimes.sh
+docker compose -f compose/compose.yml restart rustpad
 ```
 
 Then open `http://localhost:3030`. The Run button appears under the language
